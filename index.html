@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BP Log</title>
+<style>
+:root{--bg:#f3f6f4;--ink:#16302b;--mute:#5d746e;--card:#fff;--line:#d5e0dc;--accent:#0f6b5c;--high:#b3261e;--warn:#b26a00;--ok:#1b7a3d}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1a18;--ink:#e6f0ed;--mute:#93aaa4;--card:#172624;--line:#2b403c;--accent:#4fc3ad;--high:#ff8a80;--warn:#ffb74d;--ok:#7fd69a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 Georgia,"Times New Roman",serif}
+.wrap{max-width:760px;margin:0 auto;padding:16px}
+h1{font-size:1.6rem;margin:8px 0 2px}
+.sub{color:var(--mute);margin:0 0 16px;font-family:system-ui,sans-serif;font-size:.9rem}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+h2{font-size:1.15rem;margin:0 0 10px}
+button,input,select{font:inherit;font-family:system-ui,sans-serif}
+button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:10px 16px;cursor:pointer}
+button.alt{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--warn);outline-offset:2px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:end}
+.row label{display:flex;flex-direction:column;font-size:.8rem;color:var(--mute);font-family:system-ui,sans-serif;flex:1;min-width:90px}
+input,select{padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);width:100%}
+#preview{max-width:100%;max-height:220px;border-radius:8px;margin:10px 0;display:none}
+#status{font-family:system-ui,sans-serif;font-size:.9rem;color:var(--mute);margin:6px 0}
+table{width:100%;border-collapse:collapse;font-family:system-ui,sans-serif;font-size:.92rem}
+th,td{border-bottom:1px solid var(--line);padding:7px 6px;text-align:left}
+th{color:var(--mute);font-weight:600}
+.hi{color:var(--high);font-weight:700}.mid{color:var(--warn);font-weight:700}.lo{color:var(--ok);font-weight:700}
+td button{padding:3px 9px;font-size:.8rem}
+.sum{font-family:system-ui,sans-serif;font-size:.9rem;margin:10px 0}
+.empty{color:var(--mute);font-family:system-ui,sans-serif}
+#printHead{display:none}
+@media print{
+ body{background:#fff;color:#000}.wrap{padding:0}
+ .noprint,.act{display:none!important}
+ section.log{border:0;padding:0}
+ #printHead{display:block;margin-bottom:10px}
+ th,td{border-bottom:1px solid #999;color:#000}
+ .hi,.mid,.lo{color:#000}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+ <div class="noprint">
+  <h1>BP Log</h1>
+  <p class="sub">Photograph your BP monitor or type the reading. Saved on this device only.</p>
+
+  <section>
+   <h2>Scan from photo</h2>
+   <input type="file" id="photo" accept="image/*" capture="environment" hidden>
+   <button id="snap">Take photo of monitor</button>
+   <button class="alt" id="pick">Choose from gallery</button>
+   <img id="preview" alt="Captured monitor">
+   <div id="status"></div>
+  </section>
+
+  <section>
+   <h2>Reading</h2>
+   <div class="row">
+    <label>Upper (SYS)<input id="sys" type="number" inputmode="numeric" min="50" max="300"></label>
+    <label>Lower (DIA)<input id="dia" type="number" inputmode="numeric" min="30" max="200"></label>
+    <label>Pulse<input id="pul" type="number" inputmode="numeric" min="30" max="220"></label>
+   </div>
+   <div class="row" style="margin-top:8px">
+    <label>Date &amp; time<input id="dt" type="datetime-local"></label>
+    <button id="save">Save reading</button>
+   </div>
+   <p class="sub" style="margin:8px 0 0">Photo readings are filled in automatically. Check the numbers, then save.</p>
+  </section>
+ </div>
+
+ <section class="log">
+  <div id="printHead"><h1>Blood pressure log</h1></div>
+  <div class="row noprint" style="margin-bottom:10px">
+   <label>Month<input id="month" type="month"></label>
+   <button id="csv" class="alt">Download sheet (CSV)</button>
+   <button id="print">Print</button>
+  </div>
+  <h2 id="mtitle"></h2>
+  <div id="tbl"></div>
+  <div class="sum" id="sum"></div>
+ </section>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const KEY="bp-log-v1";
+let data=[];
+try{data=JSON.parse(localStorage.getItem(KEY)||"[]")}catch(e){data=[]}
+const persist=()=>{try{localStorage.setItem(KEY,JSON.stringify(data))}catch(e){alert("Could not save: storage is full or blocked.")}};
+const pad=n=>String(n).padStart(2,"0");
+const localISO=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+$("dt").value=localISO(new Date());
+$("month").value=localISO(new Date()).slice(0,7);
+
+// ---- Photo + OCR ----
+$("snap").onclick=()=>{$("photo").setAttribute("capture","environment");$("photo").click()};
+$("pick").onclick=()=>{$("photo").removeAttribute("capture");$("photo").click()};
+$("photo").onchange=async e=>{
+ const f=e.target.files[0]; if(!f) return;
+ const url=URL.createObjectURL(f);
+ $("preview").src=url;$("preview").style.display="block";
+ $("status").textContent="Reading numbers from photo…";
+ try{
+  const canvas=await prep(url);
+  const r=await Tesseract.recognize(canvas,"eng",{tessedit_char_whitelist:"0123456789"});
+  const nums=(r.data.text.match(/\d{2,3}/g)||[]).map(Number);
+  const v=pick(nums);
+  if(v){$("sys").value=v[0];$("dia").value=v[1];$("pul").value=v[2];
+   $("status").textContent=`Found ${v[0]}/${v[1]}, pulse ${v[2]}. Check them, then save.`;}
+  else $("status").textContent="Could not read the numbers clearly. Retake in good light or type them in.";
+ }catch(err){$("status").textContent="Photo reading failed (needs internet for the first scan). Enter the numbers manually."}
+ e.target.value="";
+};
+function prep(url){return new Promise(res=>{
+ const im=new Image();im.onload=()=>{
+  const s=Math.min(1,1400/Math.max(im.width,im.height));
+  const c=document.createElement("canvas");c.width=im.width*s;c.height=im.height*s;
+  const x=c.getContext("2d");x.filter="grayscale(1) contrast(1.6)";x.drawImage(im,0,0,c.width,c.height);res(c)};
+ im.src=url})}
+// Monitor order is top to bottom: SYS, DIA, PULSE
+function pick(n){
+ const ok=n.filter(v=>v>=30&&v<=300);
+ for(let i=0;i+2<ok.length;i++){
+  const [s,d,p]=ok.slice(i,i+3);
+  if(s>=70&&s<=260&&d>=40&&d<=160&&s>d&&p>=30&&p<=220) return [s,d,p];
+ }
+ return null;
+}
+
+// ---- Save / delete ----
+$("save").onclick=()=>{
+ const s=+$("sys").value,d=+$("dia").value,p=+$("pul").value;
+ if(!s||!d||!p){alert("Enter upper, lower and pulse.");return}
+ if(s<=d){alert("Upper BP must be higher than lower BP.");return}
+ data.push({id:Date.now(),dt:$("dt").value||localISO(new Date()),s,d,p});
+ data.sort((a,b)=>a.dt.localeCompare(b.dt));
+ persist();
+ $("sys").value=$("dia").value=$("pul").value="";
+ $("preview").style.display="none";$("status").textContent="Saved.";
+ $("dt").value=localISO(new Date());
+
+ render();
+};
+function del(id){if(confirm("Delete this reading?")){data=data.filter(r=>r.id!==id);persist();render()}}
+window.del=del;
+
+// ---- Sheet ----
+const cls=r=>r.s>=140||r.d>=90?"hi":(r.s>=120||r.d>=80?"mid":"lo");
+const rows=()=>data.filter(r=>r.dt.startsWith($("month").value));
+function fmt(dt){const d=new Date(dt);return d.toLocaleDateString(undefined,{day:"2-digit",month:"short"})+" "+pad(d.getHours())+":"+pad(d.getMinutes())}
+function render(){
+ const m=$("month").value, rs=rows();
+ const title=m?new Date(m+"-01").toLocaleDateString(undefined,{month:"long",year:"numeric"}):"";
+ $("mtitle").textContent=title;
+ $("printHead").querySelector("h1").textContent="Blood pressure log: "+title;
+ if(!rs.length){$("tbl").innerHTML='<p class="empty">No readings this month.</p>';$("sum").textContent="";return}
+ $("tbl").innerHTML="<table><thead><tr><th>#</th><th>Date &amp; time</th><th>Upper</th><th>Lower</th><th>Pulse</th><th class='act'></th></tr></thead><tbody>"+
+  rs.map((r,i)=>`<tr><td>${i+1}</td><td>${fmt(r.dt)}</td><td class="${cls(r)}">${r.s}</td><td class="${cls(r)}">${r.d}</td><td>${r.p}</td><td class="act"><button class="alt" onclick="del(${r.id})">Delete</button></td></tr>`).join("")+"</tbody></table>";
+ const avg=k=>Math.round(rs.reduce((a,r)=>a+r[k],0)/rs.length);
+ $("sum").textContent=`${rs.length} readings. Average ${avg("s")}/${avg("d")}, pulse ${avg("p")}.`;
+}
+$("month").onchange=render;
+
+// ---- Export / print ----
+$("csv").onclick=()=>{
+ const rs=rows(); if(!rs.length){alert("No readings this month.");return}
+ const lines=["Date,Time,Upper (SYS),Lower (DIA),Pulse",...rs.map(r=>{const[a,b]=r.dt.split("T");return `${a},${b},${r.s},${r.d},${r.p}`})];
+ const blob=new Blob(["\ufeff"+lines.join("\n")],{type:"text/csv"});
+ const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`bp-log-${$("month").value}.csv`;a.click();
+};
+$("print").onclick=()=>window.print();
+render();
+</script>
+</body>
+</html>
